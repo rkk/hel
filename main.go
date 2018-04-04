@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,6 +31,11 @@ type RuntimeConfiguration struct {
 	service   string
 	delay     int
 }
+
+// Hack to avoid warning "should not use basic type as key in Context.WithValue()".
+type key int
+
+const ctxKey key = 1
 
 func (s *Service) badRequestHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -69,6 +75,26 @@ func getInput(u url.URL) (http.Response, error) {
 	defer response.Body.Close()
 
 	return *response, nil
+}
+
+// Build a HTTP handler from input.
+func buildHandler(input http.Response, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), ctxKey, input)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// Sends an HTTP response based on the input contents.
+func writeResponse(w http.ResponseWriter, r *http.Request) {
+	input := r.Context().Value(ctxKey)
+	if input == nil {
+		w.WriteHeader(500)
+		w.Write([]byte("No message"))
+	} else {
+		w.WriteHeader(200)
+		w.Write([]byte(input.(string)))
+	}
 }
 
 func displayUsage() {
@@ -149,5 +175,9 @@ func main() {
 		service:  config.service,
 		delay:    config.delay,
 	}
-	serveBadRequest(s)
+
+	serviceHandler := buildHandler(s.input, http.HandlerFunc(writeResponse))
+	mux := new(http.ServeMux)
+	mux.Handle(s.endpoint, serviceHandler)
+	http.ListenAndServe(fmt.Sprintf(":%d", s.port), mux)
 }
