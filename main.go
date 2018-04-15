@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,26 +10,6 @@ import (
 	"os"
 	"time"
 )
-
-// Service provides different kinds of network durability impacting services.
-type Service struct {
-	input    http.Response
-	endpoint string
-	port     int
-	service  string
-	delay    int
-}
-
-// RuntimeConfiguration provides a structured configuration for application invocation.
-type RuntimeConfiguration struct {
-	listMode  bool
-	usageMode bool
-	endpoint  string
-	input     string
-	port      int
-	service   string
-	delay     int
-}
 
 // Hack to avoid warning "should not use basic type as key in Context.WithValue()".
 type key int
@@ -97,84 +76,26 @@ func writeResponse(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func displayUsage() {
-	fmt.Printf("Usage: hel OPTIONS\n")
-	fmt.Printf("  --list             - Lists the provided services\n")
-	fmt.Printf("  --input=URL        - Retrieve input data from URL\n")
-	fmt.Printf("  --endpoint=PATH    - Serves Hel from the PATH endpoint\n")
-	fmt.Printf("  --port=PORT        - Serves Hel from the PORT TCP port number\n")
-	fmt.Printf("  --service=NAME     - Use the service type NAME\n")
-	fmt.Printf("  --delay=SECONDS    - Delay the response for SECONDS\n")
-	fmt.Printf("\n")
-}
-
-func displayServices() {
-	fmt.Printf("Services:\n")
-	fmt.Printf("  badrequest  - Returns HTTP 400 Bad Request\n")
-	fmt.Printf("\n")
-}
-
-func buildRuntimeConfiguration() (RuntimeConfiguration, error) {
-	listPtr := flag.Bool("list", false, "Lists the provided services")
-	endpointPtr := flag.String("endpoint", "", "Endpoint to serve")
-	inputPtr := flag.String("input", "", "Retrieve data from this URL")
-	portPtr := flag.Int("port", 0, "TCP port to serve from")
-	servicePtr := flag.String("service", "", "Service type, see --list")
-	delayPtr := flag.Int("delay", 0, "Delay the response")
-	flag.Parse()
-
-	var usageMode = false
-	if (*endpointPtr == "" || *inputPtr == "" || *portPtr == 0 || *servicePtr == "") && *listPtr == false {
-		usageMode = true
-	}
-
-	runtime := RuntimeConfiguration{
-		listMode:  *listPtr,
-		usageMode: usageMode,
-		endpoint:  *endpointPtr,
-		input:     *inputPtr,
-		port:      *portPtr,
-		service:   *servicePtr,
-		delay:     *delayPtr,
-	}
-	return runtime, nil
-}
-
 func main() {
-
 	config, err := buildRuntimeConfiguration()
 	if err != nil {
 		log.Fatal("ERROR: Invalid runtime configuration")
 		os.Exit(1)
 	}
 
-	if config.listMode == true {
-		displayServices()
-		os.Exit(0)
+	shouldExit, code := parseRuntimeConfiguration(config)
+	if shouldExit == true {
+		os.Exit(code)
 	}
 
-	if config.usageMode == true {
-		displayUsage()
-		os.Exit(0)
-	}
-	u, err := url.Parse(config.input)
-	if err != nil {
-		log.Fatal("ERROR: %s is not a valid input URL\n", config.input)
-		os.Exit(1)
-	}
-
+	// Once implememented, the proxy service pattern replaces getInput().
+	u, _ := url.Parse(config.input)
 	input, err := getInput(*u)
 	if err != nil {
 		log.Fatal("ERROR: Cannot retrieve contents of %s", u.String())
 	}
 
-	s := Service{
-		endpoint: config.endpoint,
-		input:    input,
-		port:     config.port,
-		service:  config.service,
-		delay:    config.delay,
-	}
+	s := buildService(config, input)
 
 	serviceHandler := buildHandler(s.input, http.HandlerFunc(writeResponse))
 	mux := new(http.ServeMux)
