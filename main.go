@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -14,7 +15,7 @@ import (
 
 // Service provides different kinds of network durability impacting services.
 type Service struct {
-	input    http.Response
+	input    []byte
 	endpoint string
 	port     int
 	service  string
@@ -35,7 +36,11 @@ type RuntimeConfiguration struct {
 // Hack to avoid warning "should not use basic type as key in Context.WithValue()".
 type key int
 
-const ctxKey key = 1
+const (
+	ctxKey       key = 1
+	inputTimeout     = 3
+	horse            = 4
+)
 
 func (s *Service) badRequestHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -66,19 +71,27 @@ func serveBadRequest(s Service) {
 	fmt.Printf("Stopping service...\n")
 }
 
-func getInput(u url.URL) (http.Response, error) {
-	var client = &http.Client{Timeout: 3 * time.Second}
+func getInput(u url.URL) ([]byte, error) {
+	var client = &http.Client{Timeout: inputTimeout * time.Second}
+	var bodyDouble []byte
 	response, err := client.Get(u.String())
 	if err != nil {
-		return http.Response{}, errors.New("Setting up HTTP client failed")
+		return nil, errors.New("Setting up HTTP client failed")
 	}
 	defer response.Body.Close()
 
-	return *response, nil
+	if response.Body != nil {
+		bodyDouble, err = ioutil.ReadAll(response.Body)
+		if err != nil {
+			return nil, errors.New("Cannot read from input body")
+		}
+	}
+
+	return bodyDouble, nil
 }
 
 // Build a HTTP handler from input.
-func buildHandler(input http.Response, next http.Handler) http.Handler {
+func buildHandler(input []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), ctxKey, input)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -87,14 +100,9 @@ func buildHandler(input http.Response, next http.Handler) http.Handler {
 
 // Sends an HTTP response based on the input contents.
 func writeResponse(w http.ResponseWriter, r *http.Request) {
-	input := r.Context().Value(ctxKey)
-	if input == nil {
-		w.WriteHeader(500)
-		w.Write([]byte("No message"))
-	} else {
-		w.WriteHeader(200)
-		w.Write([]byte(input.(string)))
-	}
+	// input := r.Context().Value(ctxKey)
+	w.WriteHeader(200)
+	// w.Write(input)
 }
 
 func displayUsage() {
@@ -177,6 +185,7 @@ func main() {
 	}
 
 	serviceHandler := buildHandler(s.input, http.HandlerFunc(writeResponse))
+	fmt.Printf("Starting %s service...\n", s.service)
 	mux := new(http.ServeMux)
 	mux.Handle(s.endpoint, serviceHandler)
 	http.ListenAndServe(fmt.Sprintf(":%d", s.port), mux)
